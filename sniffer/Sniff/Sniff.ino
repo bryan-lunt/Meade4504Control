@@ -11,28 +11,29 @@
 *
 */
 
+#include "Buff.h"
+
 const int DATA_PIN = 4;
 const int CLK_INTERRUPT = 0; // Pin 2.
 
 
-const int DATASIZE = 2000;
-const int NUM_BUFFS = 2;
+const int DATASIZE = 1000;
+const int NUM_BUFFS = 5;
 
 const int CLOCK_EDGE = FALLING;
 
 //The number of microseconds to wait for another timing pulse before deciding there won't be one.
 const unsigned long PACKET_TIMEOUT = 4000;
 
-volatile int x = 0;
-volatile int buff_num = 0;
-volatile int buff_sizes[NUM_BUFFS];
-volatile byte data[NUM_BUFFS][DATASIZE];
-volatile boolean to_send = false;
+volatile unsigned long current_read_buff = 0;
+unsigned long current_print_buff = 0;
 volatile unsigned long last_time;
 
+volatile boolean overflow_error = false;
 
-void set_send(){
-}
+Buff buffers[NUM_BUFFS];
+
+
 
 void pin2()
 {
@@ -40,13 +41,14 @@ void pin2()
  
   unsigned long new_time = micros();
   if(new_time - last_time > PACKET_TIMEOUT){
-    to_send = true;
-    buff_sizes[buff_num] = x;
-    buff_num = (buff_num + 1) % NUM_BUFFS;
-    x = 0;
+    buffers[current_read_buff].set_ready(true);
+    current_read_buff = (current_read_buff + 1)%NUM_BUFFS;
   }
-  data[buff_num][x] = tmp_data;
-  x++;
+  if(buffers[current_read_buff].get_ready()){
+    overflow_error = true;
+  }
+  
+  buffers[current_read_buff].put(tmp_data);
   last_time = new_time;
   
 }
@@ -54,6 +56,11 @@ void pin2()
 
 void setup()
 {
+  int i;
+  for(i = 0;i<NUM_BUFFS;i++){
+    buffers[i] = Buff();
+  }
+  
   Serial.begin(57600);
   attachInterrupt(CLK_INTERRUPT,pin2,CLOCK_EDGE);
   pinMode(DATA_PIN,INPUT);
@@ -62,23 +69,37 @@ void setup()
 
 void loop()
 {
-   int my_buff = (buff_num + 1) % NUM_BUFFS;
-   
-   int num_bits;
-   int i;
-   if(to_send){
-    num_bits = buff_sizes[my_buff];
+  int i;
+  
+  if(overflow_error){
+    Serial.println("OVERFLOW OF BUFFERS");
+  }
+  
+   if(!buffers[current_print_buff].get_ready()){
+     return;
+   }
+   //The current buffer is ready to be output.
+    int num_bits = buffers[current_print_buff].get_size();
     
     Serial.print(num_bits);
-    Serial.print(" : ");
+    if(num_bits < 10){
+      Serial.print("  : ");
+    }else{
+      Serial.print(" : ");
+    }
     
   
     for(i = 0;i<num_bits;i++){
-      Serial.print(data[my_buff][i]);
+      Serial.print(buffers[current_print_buff].data[i]);
     }
+    
+    buffers[current_print_buff].clear_buff();
+    
     Serial.println("");
-
     Serial.flush();
-  }
+    
+    current_print_buff = (current_print_buff + 1) % NUM_BUFFS;
+    
+
   
 }
